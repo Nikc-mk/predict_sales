@@ -45,6 +45,7 @@ env/
 forecast_output.csv
 output/
 logs/
+*.png
 
 # OS
 .DS_Store

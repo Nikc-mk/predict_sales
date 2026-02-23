@@ -23,7 +23,7 @@ def generate_sales_data():
     today = date.today()
     
     # Начало месяца от (текущая дата - 2 года)
-    start_date = date(today.year - 2, today.month, 1)
+    start_date = date(today.year - 3, today.month, 1)
     
     # Вчера (включительно)
     end_date = today - timedelta(days=1)
