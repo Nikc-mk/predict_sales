@@ -22,7 +22,7 @@ import numpy as np
 from model import TabTransformerModel
 
 
-def train_model(df, epochs: int = 5, batch_size: int = 256, learning_rate: float = 1e-3):
+def train_model(df, epochs: int = 20, batch_size: int = 256, learning_rate: float = 1e-3):
     """
     Обучает модель TabTransformer на переданных данных.
     

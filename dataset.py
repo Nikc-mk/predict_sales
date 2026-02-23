@@ -126,64 +126,125 @@ class TabularDataset:
         
         return 0
 
+    def _precompute_lags(self):
+        """Предварительно вычисляет лаги для всех дат и категорий."""
+        print("  Предварительный расчёт лагов...")
+        
+        # Для каждой категории создаём DataFrame с лагами
+        lags_data = {}
+        
+        for cat in self.categories:
+            if cat not in self.full_df.columns:
+                continue
+            
+            series = self.full_df[cat]
+            
+            # Лаг 7: сумма за 7 дней (включая сегодня)
+            lag7 = series.rolling(window=7, min_periods=1).sum().shift(1)
+            # Лаг 14: сумма за 14 дней
+            lag14 = series.rolling(window=14, min_periods=1).sum().shift(1)
+            # Лаг 28: сумма за 28 дней
+            lag28 = series.rolling(window=28, min_periods=1).sum().shift(1)
+            
+            lags_data[cat] = {
+                'last7': lag7,
+                'last14': lag14,
+                'last28': lag28
+            }
+        
+        self._lags_cache = lags_data
+        print("  Лаги рассчитаны.")
+
+    def _get_lag(self, cat, date, lag_type):
+        """Быстрое получение лага из кэша."""
+        if not hasattr(self, '_lags_cache'):
+            self._precompute_lags()
+        
+        if cat not in self._lags_cache:
+            return 0
+        
+        lag_series = self._lags_cache[cat].get(lag_type)
+        if lag_series is None or date not in lag_series.index:
+            return 0
+        
+        val = lag_series.loc[date]
+        return 0 if pd.isna(val) else val
+
     def build_samples(self) -> pd.DataFrame:
         """
-        Создаёт обучающую выборку.
-        
-        Для каждого дня месяца (кроме последнего) и каждой категории:
-        1. Считаем накопленные продажи с начала месяца (cumulative)
-        2. Определяем целевую - продажи на остаток месяца (remaining)
-        3. Добавляем лаги и календарные признаки
+        Создаёт обучающую выборку (оптимизированная версия с кэшированием).
         
         Returns:
             DataFrame с признаками и целевой переменной
         """
-        samples = []
-
-        # Итерируемся по каждой дате в периоде обучения
-        for date in self.df.index:
-            day = date.day
+        print("Создание обучающей выборки...")
+        
+        # Предварительно вычисляем лаги
+        self._precompute_lags()
+        
+        # Копируем данные и добавляем вспомогательные колонки
+        df = self.df.copy()
+        
+        # Создаём уникальный идентификатор месяца для groupby
+        df['year_month'] = df.index.to_period('M')
+        
+        # Кумулятивная сумма продаж внутри каждого месяца
+        df_cum = df.groupby('year_month')[list(self.categories)].cumsum()
+        
+        # Сумма продаж за месяц (для расчёта remaining)
+        month_totals = df.groupby('year_month')[list(self.categories)].sum()
+        
+        # Преобразуем month_totals в словарь для быстрого доступа
+        month_totals_dict = month_totals.to_dict('index')
+        
+        samples_list = []
+        
+        print("  Генерация сэмплов...")
+        
+        # Группируем по году-месяцу
+        for period_idx, (period, period_data) in enumerate(df.groupby('year_month')):
+            if period_idx % 10 == 0:
+                print(f"    Период {period_idx+1}...")
             
-            # Маска для всех дней текущего месяца
-            month_mask = (
-                (self.df.index.year == date.year)
-                & (self.df.index.month == date.month)
-            )
-
-            # Для каждой категории создаём сэмпл
-            for cat in self.categories:
-                # cumulative_sales: продажи с 1-го числа по текущий день
-                cumulative = self.df.loc[month_mask & (self.df.index.day <= day), cat].sum()
-
-                # remaining: продажи со следующего дня до конца месяца (целевая переменная)
-                remaining = self.df.loc[month_mask & (self.df.index.day > day), cat].sum()
-
-                # Пропускаем последний день месяца (нечего предсказывать)
-                if remaining == 0 and day == self.df.loc[month_mask].index.day.max():
-                    continue
-
-                # Лаги: продажи за последние 7, 14, 28 дней (из всех доступных данных)
-                last7 = self.full_df.loc[:date].tail(7)[cat].sum()
-                last14 = self.full_df.loc[:date].tail(14)[cat].sum()
-                last28 = self.full_df.loc[:date].tail(28)[cat].sum()
-
-                # Формируем сэмпл
-                sample = {
-                    "date": date,
-                    "category": cat,
-                    "month": date.month,
-                    "day_of_month": day,
-                    "days_left": self.cal.loc[date, "days_left"],
-                    "work_days_left": self.cal.loc[date, "work_days_left"],
-                    "cumulative_sales": cumulative,
-                    "sales_last_7": last7,
-                    "sales_last_14": last14,
-                    "sales_last_28": last28,
-                    "sales_same_month_lastyear": self._last_year_progress(cat, date),
-                    "sales_previous_month_total": self._previous_month_total(cat, date),
-                    "target": remaining,  # то, что предсказываем
-                }
-
-                samples.append(sample)
-
-        return pd.DataFrame(samples)
+            dates = period_data.index.tolist()
+            
+            for date in dates[:-1]:  # исключаем последний день
+                day = date.day
+                
+                for cat in self.categories:
+                    # Cumulative: кумулятивная сумма до текущего дня
+                    cumulative = df_cum.loc[date, cat] if cat in df_cum.columns else 0
+                    
+                    # Target: остаток месяца = всего за месяц - cumulative
+                    if period in month_totals_dict and cat in month_totals_dict[period]:
+                        month_total = month_totals_dict[period][cat]
+                        remaining = month_total - cumulative
+                    else:
+                        remaining = 0
+                    
+                    if remaining <= 0:
+                        continue
+                    
+                    # Лаги из кэша
+                    last7 = self._get_lag(cat, date, 'last7')
+                    last14 = self._get_lag(cat, date, 'last14')
+                    last28 = self._get_lag(cat, date, 'last28')
+                    
+                    samples_list.append({
+                        "date": date,
+                        "category": cat,
+                        "month": date.month,
+                        "day_of_month": day,
+                        "days_left": self.cal.loc[date, "days_left"],
+                        "work_days_left": self.cal.loc[date, "work_days_left"],
+                        "cumulative_sales": cumulative,
+                        "sales_last_7": last7,
+                        "sales_last_14": last14,
+                        "sales_last_28": last28,
+                        "sales_same_month_lastyear": self._last_year_progress(cat, date),
+                        "sales_previous_month_total": self._previous_month_total(cat, date),
+                        "target": remaining,
+                    })
+            
+        print(f"  Создано сэмплов: {len(samples_list):,}")
+        return pd.DataFrame(samples_list)
