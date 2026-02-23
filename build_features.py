@@ -16,8 +16,8 @@ def load_raw_data(path: str):
     # присваиваем корректные имена
     df.columns = ["date", "category", "sales"]
 
-    # преобразуем дату
-    df["date"] = pd.to_datetime(df["date"], dayfirst=True)
+    # преобразуем дату (ISO8601 - YYYY-MM-DD)
+    df["date"] = pd.to_datetime(df["date"])
 
     # очистка числового столбца
     df["sales"] = (

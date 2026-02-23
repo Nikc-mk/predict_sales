@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import torch
 
 # ---------- Функции для прошлогодних и прошлых месячных данных ----------
 
@@ -68,6 +69,7 @@ def predict_current_month(model, data_upto_yesterday, categories_list, calendar)
 
         features = {
             'category_id': cat,
+            'month': today.month,
             'day_of_month': day_of_month,
             'days_left': days_left,
             'work_days_left': work_days_left,
@@ -79,16 +81,35 @@ def predict_current_month(model, data_upto_yesterday, categories_list, calendar)
             'sales_previous_month_total': sales_previous_month_total
         }
 
+        # Подготовка признаков для модели
+        # Числовые признаки (в том же порядке что при обучении)
+        x_num = np.array([[
+            features['month'],
+            features['day_of_month'],
+            features['days_left'],
+            features['work_days_left'],
+            features['cumulative_sales_day_1_to_t'],
+            features['sales_last_7_days'],
+            features['sales_last_14_days'],
+            features['sales_last_28_days'],
+            features['sales_same_month_lastyear_day_1_to_t'],
+            features['sales_previous_month_total']
+        ]], dtype=np.float32)
+
+        # Категория - нужно преобразовать в id
+        cat_id = categories_list.index(cat)
+        x_cat = np.array([cat_id], dtype=np.int64)
+
         # Предсказание остатка
-        predicted_remaining = model.predict(features)
+        predicted_remaining = model.predict(x_num, x_cat)
 
         total_forecast = cumulative_sales + predicted_remaining
 
         results.append({
             'category': cat,
-            'fact_so_far': cumulative_sales,
-            'predicted_remaining': predicted_remaining,
-            'total_forecast': total_forecast
+            'fact_so_far': cumulative_sales, # Фактические продажи с начала месяца по сегодня
+            'predicted_remaining': predicted_remaining, # Предсказанные продажи на оставшиеся дни месяца
+            'total_forecast': total_forecast # Общий прогноз на весь месяц = fact_so_far + predicted_remaining
         })
 
     return pd.DataFrame(results)

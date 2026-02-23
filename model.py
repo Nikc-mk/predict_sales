@@ -49,3 +49,12 @@ class TabTransformerModel(nn.Module):
         x = x[:, 0, :]
 
         return self.regressor(x)
+
+    def predict(self, x_num, x_cat):
+        """Inference mode - returns prediction as float"""
+        self.eval()
+        with torch.no_grad():
+            x_num = torch.tensor(x_num, dtype=torch.float32) if not isinstance(x_num, torch.Tensor) else x_num
+            x_cat = torch.tensor(x_cat, dtype=torch.int64) if not isinstance(x_cat, torch.Tensor) else x_cat
+            result = self.forward(x_num, x_cat).squeeze().item()
+        return result

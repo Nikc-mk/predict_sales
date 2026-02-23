@@ -7,7 +7,7 @@ from train import train_model
 from inference import predict_current_month
 
 # путь к данным
-DATA_PATH = r"C:\Users\matveyuk.n\VS_Project\Признаки_ПФМ\прогноз оборот\df_data.csv"
+DATA_PATH = r"/home/nikolay/PycharmProjects/predict_sales/sales_data.csv"
 
 # список категорий (фиксированный)
 CATEGORIES = [
