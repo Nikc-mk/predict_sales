@@ -154,55 +154,154 @@ def main():
     # =========================================================================
     
     print("\n" + "="*50)
-    print("ЭТАП 6: Валидация на тестовых данных")
+    print("ЭТАП 6: Валидация (3 последних месяца)")
     print("="*50)
     
-    # Разделяем данные на train/test
-    # Тест = последний полный месяц
-    test_date = samples["date"].max()
-    test_month_start = test_date.replace(day=1)
+    # Определяем 3 последних завершенных месяца
+    # Последняя дата в данных
+    last_date = wide.index.max()
     
-    test_samples = samples[samples["date"] >= test_month_start].copy()
-    train_samples = samples[samples["date"] < test_month_start].copy()
-
+    # Находим первый день текущего месяца
+    current_month_start = last_date.replace(day=1)
+    
+    # Проверяем, завершен ли текущий месяц (последний день месяца есть в данных)
+    # Если в данных есть данные за последний день месяца - месяц завершен
+    current_month_days = current_month_start.days_in_month
+    is_current_month_complete = last_date.day >= current_month_days
+    
+    if is_current_month_complete:
+        # Текущий месяц завершен, берём 3 последних месяца включая текущий
+        test_months = []
+        for i in range(3):
+            month = current_month_start - pd.DateOffset(months=i)
+            test_months.append((month.year, month.month))
+    else:
+        # Текущий месяц НЕ завершен, берём 3 месяца ДО него
+        test_months = []
+        for i in range(1, 4):
+            month = current_month_start - pd.DateOffset(months=i)
+            test_months.append((month.year, month.month))
+    
+    print(f"Тестовые месяцы: {test_months}")
+    
+    # Обучаем модель на всех данных до первого тестового месяца
+    first_test_month = pd.Timestamp(year=test_months[0][0], month=test_months[0][1], day=1)
+    train_samples = samples[samples["date"] < first_test_month].copy()
+    
     print(f"Обучающая выборка: {len(train_samples):,} записей")
-    print(f"Тестовая выборка: {len(test_samples):,} записей")
     
-    # Обучаем модель только на train данных
+    # Обучаем модель
     model_val, encoder_val = train_model(train_samples)
 
-    # Добавляем cat_id для теста
-    test_samples["cat_id"] = encoder_val.transform(test_samples["category"])
-
-    # Предсказания на тесте
-    X_num_test = test_samples.drop(columns=["category", "target", "cat_id", "date"]).values.astype("float32")
-    X_cat_test = test_samples["cat_id"].values.astype("int64")
-
-    model_val.eval()
-    with torch.no_grad():
-        X_num_tensor = torch.tensor(X_num_test, dtype=torch.float32)
-        X_cat_tensor = torch.tensor(X_cat_test, dtype=torch.int64)
-        predictions = model_val(X_num_tensor, X_cat_tensor).squeeze().numpy()
-
-    test_samples["predicted"] = predictions
-
-    # === Метрики качества ===
+    # Теперь для каждого тестового месяца и для каждого дня
+    # делаем прогноз и сравниваем с фактом
     
-    # MAE (Mean Absolute Error) - средняя абсолютная ошибка
-    mae = np.mean(np.abs(test_samples["target"] - test_samples["predicted"]))
+    # Получаем wide данные для расчёта фактических продаж
+    wide_reset = wide.reset_index()
+    wide_reset.columns = ['date'] + list(wide.columns)
     
-    # RMSE (Root Mean Square Error) - корень из среднеквадратичной ошибки
-    rmse = np.sqrt(np.mean((test_samples["target"] - test_samples["predicted"])**2))
+    validation_results = []
     
-    # MAPE (Mean Absolute Percentage Error) - средняя абсолютная ошибка в процентах
-    mape = np.mean(
-        np.abs((test_samples["target"] - test_samples["predicted"]) / (test_samples["target"] + 1))
-    ) * 100
+    print("\nВалидация по дням...")
     
-    print(f"\nМетрики качества на тесте:")
-    print(f"  MAE:  {mae:,.0f} (средняя ошибка в рублях)")
-    print(f"  RMSE: {rmse:,.0f} (штраф за большие ошибки)")
-    print(f"  MAPE: {mape:.2f}% (ошибка в процентах)")
+    for test_year, test_month in test_months:
+        # Даты тестового месяца
+        month_start = pd.Timestamp(year=test_year, month=test_month, day=1)
+        if test_month == 12:
+            month_end = pd.Timestamp(year=test_year+1, month=1, day=1) - pd.Timedelta(days=1)
+        else:
+            month_end = pd.Timestamp(year=test_year, month=test_month+1, day=1) - pd.Timedelta(days=1)
+        
+        print(f"  Обработка месяца {test_year}-{test_month:02d}...")
+        
+        # Фактические продажи за весь месяц (по всем категориям)
+        month_mask = (wide_reset['date'] >= month_start) & (wide_reset['date'] <= month_end)
+        month_data = wide_reset[month_mask]
+        
+        # Факт за весь месяц (сумма всех продаж)
+        fact_total = month_data[CATEGORIES].sum().sum()
+        
+        # Для каждого дня в месяце (с 1-го по предпоследний)
+        for day in range(1, month_end.day):
+            forecast_date = pd.Timestamp(year=test_year, month=test_month, day=day)
+            
+            # Факт с начала месяца по текущий день (включительно)
+            fact_so_far_mask = (wide_reset['date'] >= month_start) & (wide_reset['date'] <= forecast_date)
+            fact_so_far = wide_reset[fact_so_far_mask][CATEGORIES].sum().sum()
+            
+            # Для каждой категории делаем прогноз на остаток месяца
+            predicted_remaining_total = 0
+            
+            for cat in CATEGORIES:
+                # Признаки для модели на дату forecast_date
+                # cumulative_sales: факт с начала месяца по текущий день
+                cat_data = month_data[cat] if cat in month_data.columns else pd.Series([0])
+                cum_mask = month_data['date'] <= forecast_date
+                cumulative = month_data.loc[cum_mask, cat].sum() if cat in month_data.columns else 0
+                
+                # Лаги
+                last7 = wide.loc[:forecast_date].tail(7)[cat].sum() if cat in wide.columns else 0
+                last14 = wide.loc[:forecast_date].tail(14)[cat].sum() if cat in wide.columns else 0
+                last28 = wide.loc[:forecast_date].tail(28)[cat].sum() if cat in wide.columns else 0
+                
+                # Данные за прошлый год
+                last_year_date = forecast_date - pd.DateOffset(years=1)
+                last_year_mask = (wide.index.year == last_year_date.year) & \
+                                 (wide.index.month == last_year_date.month) & \
+                                 (wide.index.day <= last_year_date.day)
+                sales_same_month_lastyear = wide.loc[last_year_mask, cat].sum() if cat in wide.columns else 0
+                
+                # Данные за предыдущий месяц
+                prev_month_date = forecast_date - pd.DateOffset(months=1)
+                prev_month_mask = (wide.index.year == prev_month_date.year) & \
+                                  (wide.index.month == prev_month_date.month)
+                sales_previous_month_total = wide.loc[prev_month_mask, cat].sum() if cat in wide.columns else 0
+                
+                # Календарные признаки
+                days_in_month = calendar.loc[forecast_date.replace(day=1):forecast_date].index.max().days_in_month if forecast_date in calendar.index else 30
+                days_left = days_in_month - day
+                work_days_left = calendar.loc[forecast_date, "work_days_left"] if forecast_date in calendar.index else days_left // 2
+                
+                # Подготовка признаков для модели
+                x_num = np.array([[
+                    forecast_date.month,
+                    day,
+                    days_left,
+                    work_days_left,
+                    cumulative,
+                    last7,
+                    last14,
+                    last28,
+                    sales_same_month_lastyear,
+                    sales_previous_month_total
+                ]], dtype=np.float32)
+                
+                cat_id = CATEGORIES.index(cat)
+                x_cat = np.array([cat_id], dtype=np.int64)
+                
+                # Предсказание
+                pred = model_val.predict(x_num, x_cat)
+                predicted_remaining_total += max(0, pred)
+            
+            # Общий прогноз = факт на сегодня + прогноз на остаток
+            total_forecast = fact_so_far + predicted_remaining_total
+            
+            # Ошибка
+            error_pct = (total_forecast - fact_total) / (fact_total + 1) * 100
+            
+            validation_results.append({
+                'month': f"{test_year}-{test_month:02d}",
+                'forecast_date': forecast_date,
+                'day_of_month': day,
+                'fact_total': fact_total,
+                'fact_so_far': fact_so_far,
+                'predicted_remaining': predicted_remaining_total,
+                'total_forecast': total_forecast,
+                'error_pct': error_pct
+            })
+    
+    val_df = pd.DataFrame(validation_results)
+    print(f"Всего записей валидации: {len(val_df)}")
     
     # === Визуализация ===
     
@@ -210,62 +309,65 @@ def main():
     
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
-    # График 1: Scatter - факт vs предсказание
-    # Идеально: все точки на диагонали
+    # График 1: Ошибка прогноза по дням (все месяцы)
     ax1 = axes[0, 0]
-    ax1.scatter(test_samples["target"], test_samples["predicted"], alpha=0.3, s=10)
-    max_val = max(test_samples["target"].max(), test_samples["predicted"].max())
-    ax1.plot([0, max_val], [0, max_val], 'r--', label='Идеально')
-    ax1.set_xlabel("Фактические продажи")
-    ax1.set_ylabel("Предсказанные продажи")
-    ax1.set_title("Факт vs Предсказание (scatter)")
+    for month in val_df['month'].unique():
+        month_data = val_df[val_df['month'] == month]
+        ax1.plot(month_data['day_of_month'], month_data['error_pct'], 
+                 marker='o', markersize=3, label=month)
+    ax1.axhline(y=0, color='black', linestyle='--', linewidth=1)
+    ax1.set_xlabel("День месяца (когда сделан прогноз)")
+    ax1.set_ylabel("Ошибка прогноза %")
+    ax1.set_title("Зависимость ошибки прогноза от даты\n(положительная = перепрогноз)")
     ax1.legend()
+    ax1.grid(True, alpha=0.3)
 
-    # График 2: Сравнение по категориям (столбцы)
+    # График 2: Факт vs Прогноз по дням (для каждого месяца отдельно)
     ax2 = axes[0, 1]
-    category_agg = test_samples.groupby("category").agg({
-        "target": "sum",
-        "predicted": "sum"
-    }).reset_index()
-    x = np.arange(len(category_agg))
-    width = 0.35
-    ax2.bar(x - width/2, category_agg["target"], width, label="Факт", alpha=0.7)
-    ax2.bar(x + width/2, category_agg["predicted"], width, label="Прогноз", alpha=0.7)
-    ax2.set_xlabel("Категория")
+    for month in val_df['month'].unique():
+        month_data = val_df[val_df['month'] == month].sort_values('day_of_month')
+        # fact_total - горизонтальная линия (константа для месяца)
+        ax2.axhline(y=month_data['fact_total'].iloc[0], color='blue', alpha=0.3, linestyle='--')
+        ax2.plot(month_data['day_of_month'], month_data['total_forecast'], 
+                 marker='o', markersize=3, label=f'{month} (прогноз)')
+    ax2.set_xlabel("День месяца (когда сделан прогноз)")
     ax2.set_ylabel("Продажи")
-    ax2.set_title("Сравнение по категориям")
-    ax2.legend()
-    ax2.set_xticks(x[::5])
-    ax2.set_xticklabels(category_agg["category"][::5], rotation=45, ha='right')
-
-    # График 3: Динамика по дням (все категории суммарно)
+    ax2.set_title("Факт за месяц (горизонтальные линии) vs Прогноз на дату + остаток")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+    
+    # График 3: Абсолютная ошибка по дням
     ax3 = axes[1, 0]
-    daily_agg = test_samples.groupby("day_of_month").agg({
-        "target": "sum",
-        "predicted": "sum"
-    }).reset_index()
-    ax3.plot(daily_agg["day_of_month"], daily_agg["target"], 'b-o', label="Факт", markersize=4)
-    ax3.plot(daily_agg["day_of_month"], daily_agg["predicted"], 'r--s', label="Прогноз", markersize=4)
-    ax3.set_xlabel("День месяца")
-    ax3.set_ylabel("Продажи")
-    ax3.set_title("Динамика по дням (все категории)")
-    ax3.legend()
-
-    # График 4: Процент ошибки по категориям
+    val_df['abs_error_pct'] = val_df['error_pct'].abs()
+    daily_abs_error = val_df.groupby('day_of_month')['abs_error_pct'].mean().reset_index()
+    ax3.plot(daily_abs_error['day_of_month'], daily_abs_error['abs_error_pct'], 
+             'g-o', markersize=4)
+    ax3.set_xlabel("День месяца (когда сделан прогноз)")
+    ax3.set_ylabel("Средняя абсолютная ошибка %")
+    ax3.set_title("Точность прогноза по дням\n(чем меньше - тем точнее)")
+    ax3.grid(True, alpha=0.3)
+    
+    # График 4: Сравнение по месяцам ( boxplot)
     ax4 = axes[1, 1]
-    category_error = category_agg.copy()
-    category_error["error"] = category_error["predicted"] - category_agg["target"]
-    category_error["error_pct"] = (category_error["error"] / (category_agg["target"] + 1)) * 100
-    colors = ['green' if e >= 0 else 'red' for e in category_error["error"]]
-    ax4.bar(range(len(category_error)), category_error["error_pct"], color=colors, alpha=0.7)
-    ax4.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
-    ax4.set_xlabel("Категория (индекс)")
-    ax4.set_ylabel("Ошибка %")
-    ax4.set_title("Процент ошибки по категориям\n(зелёный = перепрогноз, красный = недопрогноз)")
+    months = val_df['month'].unique()
+    data_for_box = [val_df[val_df['month'] == m]['error_pct'].values for m in months]
+    bp = ax4.boxplot(data_for_box, labels=months, patch_artist=True)
+    for patch in bp['boxes']:
+        patch.set_facecolor('lightblue')
+    ax4.axhline(y=0, color='black', linestyle='--', linewidth=1)
+    ax4.set_xlabel("Месяц")
+    ax4.set_ylabel("Ошибка прогноза %")
+    ax4.set_title("Распределение ошибки по месяцам")
+    ax4.tick_params(axis='x', rotation=45)
     
     plt.tight_layout()
     plt.savefig("validation_plot.png", dpi=150)
     print("Графики сохранены в validation_plot.png")
+    
+    # Сохраняем данные валидации
+    val_df.to_csv("validation_results.csv", index=False)
+    print("Данные валидации сохранены в validation_results.csv")
+    
     plt.show()
 
     print("\n" + "="*50)

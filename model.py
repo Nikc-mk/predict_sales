@@ -31,7 +31,7 @@ class TabTransformerModel(nn.Module):
         num_numeric: количество числовых признаков
         d_model: размерность модели (по умолчанию 64)
         n_heads: количество attention голов (по умолчанию 4)
-        n_layers: количество слоёв энкодера (по умолчанию 3)
+        n_layers: количество слоёв энкодера (по умолчанию 7)
         emb_dim: размерность эмбеддинга категории (по умолчанию 32)
     """
     
@@ -41,7 +41,7 @@ class TabTransformerModel(nn.Module):
         num_numeric,
         d_model=64,
         n_heads=4,
-        n_layers=3,
+        n_layers=7,
         emb_dim=32,
     ):
         super().__init__()
