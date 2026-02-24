@@ -112,6 +112,10 @@ def main():
     print(f"Размер датасета: {samples.shape}")
     print(f"  - Записей: {samples.shape[0]:,}")
     print(f"  - Признаков: {samples.shape[1]}")
+
+    # Сохраняем обучающую выборку
+    samples.to_csv("training_samples.csv", index=False)
+    print("Обучающая выборка сохранена в training_samples.csv")
     
     # =========================================================================
     # ЭТАП 4: Обучение модели
