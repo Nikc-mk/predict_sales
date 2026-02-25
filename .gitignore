@@ -55,4 +55,5 @@ Thumbs.db
 *.pth
 *.pt
 *.h5
+*.pkl
 models/
