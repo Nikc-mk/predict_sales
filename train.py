@@ -91,7 +91,7 @@ def train_model(df, epochs: int = 20, batch_size: int = 512, learning_rate: floa
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    loss_fn = torch.nn.MSELoss()
+    loss_fn = torch.nn.L1Loss()
 
     # === 4. Обучение ===
     
