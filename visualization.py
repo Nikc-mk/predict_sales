@@ -45,19 +45,20 @@ def plot_validation_results(val_df: pd.DataFrame, output_path: str = "validation
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # === График 2: Факт остаток vs Прогноз остатка (в абсолютных числах) ===
+    # === График 2: Ошибка прогноза общего объёма по формуле (fact_total - total_forecast) / abs(fact_total) ===
     ax2 = axes[0, 1]
+    val_df = val_df.copy()
+    val_df['total_error_pct'] = (val_df['fact_total'] - val_df['total_forecast']).abs() / val_df['fact_total'] * 100
+    
     for month in val_df['month'].unique():
         month_data = val_df[val_df['month'] == month].sort_values('day_of_month')
-        # Фактический остаток - горизонтальная линия
-        ax2.axhline(y=month_data['fact_remaining'].iloc[0], color='blue', alpha=0.3, linestyle='--')
-        # Предсказанный остаток - точки
-        ax2.plot(month_data['day_of_month'], month_data['predicted_remaining'], 
-                 marker='o', markersize=3, label=f'{month}')
+        ax2.plot(month_data['day_of_month'], month_data['total_error_pct'], 
+                 marker='o', markersize=3, label=month)
+    ax2.axhline(y=0, color='black', linestyle='--', linewidth=1)
     ax2.set_xlabel("День месяца (когда сделан прогноз)")
-    ax2.set_ylabel("Продажи за остаток месяца")
-    ax2.set_title("Фактический остаток (линии) vs Предсказанный остаток (точки)")
-    ax2.legend(fontsize=8)
+    ax2.set_ylabel("Ошибка прогноза общего объёма %")
+    ax2.set_title("(fact_total - total_forecast) / fact_total по дням")
+    ax2.legend()
     ax2.grid(True, alpha=0.3)
     
     # === График 3: Абсолютная ошибка в абсолютных числах ===
@@ -82,22 +83,22 @@ def plot_validation_results(val_df: pd.DataFrame, output_path: str = "validation
     ax3.legend()
     ax3.grid(True, alpha=0.3)
     
-    # === График 4: Boxplot по месяцам (только валидные записи) ===
+    # === График 4: Bias по дням для каждого месяца ===
     ax4 = axes[1, 1]
-    if len(valid_df) > 0:
-        months = valid_df['month'].unique()
-        data_for_box = [valid_df[valid_df['month'] == m]['error_pct'].values for m in months]
-        bp = ax4.boxplot(data_for_box, labels=months, patch_artist=True)
-        for patch in bp['boxes']:
-            patch.set_facecolor('lightblue')
-    else:
-        ax4.text(0.5, 0.5, 'Нет валидных данных', ha='center', va='center', transform=ax4.transAxes)
+    val_df = val_df.copy()
+    # Bias = (forecast - fact) / abs(fact) * 100
+    val_df['bias_pct'] = (val_df['total_forecast'] - val_df['fact_total']) / val_df['fact_total'].abs() * 100
     
+    for month in val_df['month'].unique():
+        month_data = val_df[val_df['month'] == month].sort_values('day_of_month')
+        ax4.plot(month_data['day_of_month'], month_data['bias_pct'], 
+                 marker='o', markersize=3, label=month)
     ax4.axhline(y=0, color='black', linestyle='--', linewidth=1)
-    ax4.set_xlabel("Месяц")
-    ax4.set_ylabel("Ошибка предсказания остатка %")
-    ax4.set_title("Распределение ошибки по месяцам")
-    ax4.tick_params(axis='x', rotation=45)
+    ax4.set_xlabel("День месяца")
+    ax4.set_ylabel("Bias %")
+    ax4.set_title("Bias по дням для каждого месяца")
+    ax4.legend()
+    ax4.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)

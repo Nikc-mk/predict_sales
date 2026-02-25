@@ -50,7 +50,11 @@ def main():
     print("ЭТАП 3: Создание обучающей выборки")
     print("=" * 50)
     
-    dataset_builder = TabularDataset(wide, calendar)
+    # Определяем тестовые месяцы ДО обучения, чтобы исключить их из обучающей выборки
+    test_months = get_test_months(wide)
+    print(f"Тестовые месяца (будут исключены из обучения): {test_months}")
+    
+    dataset_builder = TabularDataset(wide, calendar, test_months=test_months)
     samples = dataset_builder.build_samples()
     
     print(f"Размер датасета: {samples.shape}")
@@ -60,9 +64,9 @@ def main():
     print("\n" + "=" * 50)
     print("ЭТАП 4: Обучение модели")
     print("=" * 50)
-    
+
     model, _ = train_model(samples)
-    
+
     # === ЭТАП 5: Прогноз на текущий месяц ===
     print("\n" + "=" * 50)
     print("ЭТАП 5: Прогноз на текущий месяц")
@@ -95,13 +99,11 @@ def main():
     print("ЭТАП 6: Валидация (3 последних месяца)")
     print("=" * 50)
     
-    test_months = get_test_months(wide)
+    # test_months уже определён в ЭТАПЕ 3
     print(f"Тестовые месяца: {test_months}")
     
-    # Используем уже обученную модель и scalers (честная валидация - тестовые месяцы НЕ использовались при обучении)
-    # Модель обучена на всех данных ДО первого тестового месяца (последние 2 года)
-    # Первые тестовые месяцы - это "будущее" относительно обучающей выборки
-    model_val = model  # та же модель, что уже обучена
+    # Честная валидация: тестовые месяцы НЕ использовались при обучении
+    model_val = model
     
     # Валидация
     val_df = validate_daily(model_val, wide, calendar, test_months, scaler_X, scaler_y)

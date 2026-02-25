@@ -43,7 +43,7 @@ class TabularDataset:
         - remaining: продажи на оставшиеся дни месяца
     """
     
-    def __init__(self, wide_df: pd.DataFrame, calendar: pd.DataFrame, train_years: int = 2):
+    def __init__(self, wide_df: pd.DataFrame, calendar: pd.DataFrame, train_years: int = 2, test_months: list = None):
         """
         Инициализация датасета.
         
@@ -51,25 +51,47 @@ class TabularDataset:
             wide_df: DataFrame с продажами (широкий формат, все 3 года)
             calendar: DataFrame с календарными признаками
             train_years: количество лет для обучения (по умолчанию 2)
+            test_months: список кортежей (год, месяц) для исключения из обучения
         """
         self.full_df = wide_df      # все данные (для лагов)
         self.cal = calendar         # календарные признаки
         self.categories = wide_df.columns  # список категорий
+        self.test_months = test_months or []  # месяцы для тестирования
 
-        # Определяем период обучения (последние train_years лет)
         max_date = wide_df.index.max()  # последняя дата в данных
         
-        # Начало периода обучения - 2 года назад от конца данных
-        self.train_start = max_date - pd.DateOffset(years=train_years) + pd.DateOffset(months=1, day=1)
-        self.train_start = self.train_start.replace(day=1)  # начало месяца
+        # Определяем период обучения: 2 года, заканчивающихся за месяц до первого тестового месяца
+        if self.test_months:
+            # Первый тестовый месяц (самый ранний из тестовых)
+            first_test_year, first_test_month = self.test_months[0]
+            # Конец обучения - последний день месяца ПЕРЕД первым тестовым
+            if first_test_month == 1:
+                train_end = pd.Timestamp(year=first_test_year - 1, month=12, day=1) + pd.offsets.MonthEnd(0)
+            else:
+                train_end = pd.Timestamp(year=first_test_year, month=first_test_month - 1, day=1) + pd.offsets.MonthEnd(0)
+        else:
+            train_end = max_date
         
-        # Данные для обучения (2 плавающих года)
-        self.df = wide_df[wide_df.index >= self.train_start]
+        # Начало периода обучения - 2 года назад от train_end
+        # Пример: train_end = 2025-10-01, значит start = 2023-11-01
+        train_end_year = train_end.year
+        train_end_month = train_end.month
+        start_year = train_end_year - train_years
+        start_month = train_end_month + 1  # ноябрь (10 + 1 = 11)
+        if start_month > 12:
+            start_month -= 12
+            start_year += 1
+        self.train_start = pd.Timestamp(year=start_year, month=start_month, day=1)
         
-        # Данные за 3-й год для расчёта признаков прошлого года
+        # Данные для обучения (2 плавающих года, без тестовых месяцев)
+        self.df = wide_df[(wide_df.index >= self.train_start) & (wide_df.index <= train_end)]
+        
+        # Данные для расчёта признаков прошлого года (всё до train_start)
         self.history_df = wide_df[wide_df.index < self.train_start]
 
-        print(f"Период обучения: {self.train_start.date()} - {max_date.date()}")
+        print(f"Период обучения: {self.train_start.date()} - {train_end.date()}")
+        if self.test_months:
+            print(f"Исключены тестовые месяцы: {self.test_months}")
         print(f"История (для лагов): {self.history_df.index.min().date()} - {self.history_df.index.max().date()}")
 
     def _last_year_progress(self, cat, date) -> float:

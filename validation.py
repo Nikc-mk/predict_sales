@@ -40,6 +40,9 @@ def get_test_months(wide_df: pd.DataFrame) -> list:
         month = current_month_start - pd.DateOffset(months=i)
         test_months.append((month.year, month.month))
     
+    # Сортируем от раннего к позднему (для корректного исключения из обучения)
+    test_months.sort()
+    
     return test_months
 
 
