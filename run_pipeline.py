@@ -19,10 +19,12 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import torch
+import pickle
 from datetime import datetime
+from sklearn.preprocessing import LabelEncoder
 
 # Импорт модулей проекта
-from build_features import load_raw_data, pivot_daily, add_calendar_features, add_lags
+from build_features import load_raw_data, pivot_daily, add_calendar_features
 from dataset import TabularDataset
 from train import train_model
 from inference import predict_current_month
@@ -84,9 +86,8 @@ def main():
     print("Создание pivot-таблицы...")
     wide = pivot_daily(raw, CATEGORIES)
     
-    # Добавляем лаги (продажи за вчера и неделю назад)
-    print("Добавление лагов...")
-    wide = add_lags(wide)
+    # Лаги вычисляются в dataset.py при построении выборки
+    # (правильные значения для каждой категории)
     
     # Создаём календарные признаки
     # (день недели, выходные, рабочие дни и т.д.)
@@ -113,7 +114,11 @@ def main():
     print(f"  - Записей: {samples.shape[0]:,}")
     print(f"  - Признаков: {samples.shape[1]}")
 
-    # Сохраняем обучающую выборку
+    # Добавляем cat_id (числовой ID категории) для соответствия формату модели
+    cat_encoder = LabelEncoder()
+    samples["cat_id"] = cat_encoder.fit_transform(samples["category"])
+
+    # Сохраняем обучающую выборку с cat_id
     samples.to_csv("training_samples.csv", index=False)
     print("Обучающая выборка сохранена в training_samples.csv")
     
@@ -137,13 +142,26 @@ def main():
     print("ЭТАП 5: Прогноз на текущий месяц")
     print("="*50)
     
+    # Загружаем scalers для нормализации признаков и target
+    try:
+        with open("scaler_X.pkl", "rb") as f:
+            scaler_X = pickle.load(f)
+        with open("scaler_y.pkl", "rb") as f:
+            scaler_y = pickle.load(f)
+    except FileNotFoundError:
+        print("Внимание: scaler_X.pkl или scaler_y.pkl не найден, используем без нормализации")
+        scaler_X = None
+        scaler_y = None
+    
     # Делаем прогноз для каждой категории
     # Модель предсказывает продажи на остаток месяца
     forecast = predict_current_month(
         model=model,
         data_upto_yesterday=wide.reset_index().rename(columns={'index': 'date'}),
         categories_list=CATEGORIES,
-        calendar=calendar
+        calendar=calendar,
+        scaler_X=scaler_X,
+        scaler_y=scaler_y
     )
     
     print("\nРезультат прогноза:")
@@ -243,10 +261,19 @@ def main():
                 cum_mask = month_data['date'] <= forecast_date
                 cumulative = month_data.loc[cum_mask, cat].sum() if cat in month_data.columns else 0
                 
-                # Лаги
+                # Лаги (суммы за периоды)
                 last7 = wide.loc[:forecast_date].tail(7)[cat].sum() if cat in wide.columns else 0
                 last14 = wide.loc[:forecast_date].tail(14)[cat].sum() if cat in wide.columns else 0
                 last28 = wide.loc[:forecast_date].tail(28)[cat].sum() if cat in wide.columns else 0
+                
+                # lag1, lag7, lag14 - конкретные значения на день
+                lag1_date = forecast_date - pd.Timedelta(days=1)
+                lag7_date = forecast_date - pd.Timedelta(days=7)
+                lag14_date = forecast_date - pd.Timedelta(days=14)
+                
+                lag1 = wide.loc[lag1_date, cat] if lag1_date in wide.index and cat in wide.columns else 0
+                lag7 = wide.loc[lag7_date, cat] if lag7_date in wide.index and cat in wide.columns else 0
+                lag14 = wide.loc[lag14_date, cat] if lag14_date in wide.index and cat in wide.columns else 0
                 
                 # Данные за прошлый год
                 last_year_date = forecast_date - pd.DateOffset(years=1)
@@ -262,20 +289,63 @@ def main():
                 sales_previous_month_total = wide.loc[prev_month_mask, cat].sum() if cat in wide.columns else 0
                 
                 # Календарные признаки
-                days_in_month = calendar.loc[forecast_date.replace(day=1):forecast_date].index.max().days_in_month if forecast_date in calendar.index else 30
-                days_left = days_in_month - day
-                work_days_left = calendar.loc[forecast_date, "work_days_left"] if forecast_date in calendar.index else days_left // 2
+                cal_row = calendar.loc[forecast_date] if forecast_date in calendar.index else None
+                if cal_row is not None:
+                    days_left = cal_row["days_left"]
+                    work_days_left = cal_row["work_days_left"]
+                    day_of_week = cal_row["day_of_week"]
+                    is_weekend = int(cal_row["is_weekend"])
+                    year = cal_row["year"]
+                    month_idx = cal_row["month_idx"]
+                    month_sin = cal_row["month_sin"]
+                    month_cos = cal_row["month_cos"]
+                    day_sin = cal_row["day_sin"]
+                    day_cos = cal_row["day_cos"]
+                    weekday_sin = cal_row["weekday_sin"]
+                    weekday_cos = cal_row["weekday_cos"]
+                else:
+                    days_in_month = forecast_date.days_in_month
+                    days_left = days_in_month - day
+                    work_days_left = days_left // 2
+                    day_of_week = forecast_date.dayofweek
+                    is_weekend = int(day_of_week >= 5)
+                    year = forecast_date.year
+                    month_idx = forecast_date.year * 12 + forecast_date.month
+                    month_sin = np.sin(2 * np.pi * forecast_date.month / 12)
+                    month_cos = np.cos(2 * np.pi * forecast_date.month / 12)
+                    day_sin = np.sin(2 * np.pi * day / 31)
+                    day_cos = np.cos(2 * np.pi * day / 31)
+                    weekday_sin = np.sin(2 * np.pi * day_of_week / 7)
+                    weekday_cos = np.cos(2 * np.pi * day_of_week / 7)
                 
-                # Подготовка признаков для модели
+                # date_id: порядковый номер дня от начала данных
+                first_date = wide_reset['date'].min()
+                date_id = (forecast_date - first_date).days
+                
+                # Подготовка признаков для модели (в том же порядке, что при обучении!)
                 x_num = np.array([[
+                    date_id,
                     forecast_date.month,
                     day,
+                    day_of_week,
+                    is_weekend,
+                    year,
+                    month_idx,
+                    month_sin,
+                    month_cos,
+                    day_sin,
+                    day_cos,
+                    weekday_sin,
+                    weekday_cos,
                     days_left,
                     work_days_left,
                     cumulative,
                     last7,
                     last14,
                     last28,
+                    lag1,
+                    lag7,
+                    lag14,
                     sales_same_month_lastyear,
                     sales_previous_month_total
                 ]], dtype=np.float32)

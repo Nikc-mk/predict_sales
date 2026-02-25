@@ -111,12 +111,18 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
         - day: день месяца (1-31)
         - month: месяц (1-12)
         - day_of_week: день недели (0=понедельник, 6=воскресенье)
+        - weekday: alias для day_of_week (день недели)
+        - year: год
+        - month_idx: порядковый номер месяца (год * 12 + месяц) для тренда
+        - time_idx: порядковый индекс дня для тренда
         - days_passed: дней прошло в месяце
         - days_left: дней осталось в месяце
         - is_weekend: выходной день (True/False)
         - work_day: рабочий день (1/0)
         - work_days_passed: рабочих дней прошло в месяце
         - work_days_left: рабочих дней осталось в месяце
+        - month_sin, month_cos: циклическое кодирование месяца
+        - day_sin, day_cos: циклическое кодирование дня
     
     Args:
         df: DataFrame с датами в индексе
@@ -130,6 +136,12 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
     cal["day"] = cal.index.day              # день месяца
     cal["month"] = cal.index.month          # месяц
     cal["day_of_week"] = cal.index.dayofweek  # день недели (0-6)
+    cal["weekday"] = cal["day_of_week"]     # alias для совместимости
+
+    # Временной тренд
+    cal["year"] = cal.index.year
+    cal["month_idx"] = cal.index.year * 12 + cal.index.month  # порядковый номер месяца
+    cal["time_idx"] = np.arange(len(cal))   # порядковый индекс дня
 
     # Сколько дней прошло/осталось в месяце
     cal["days_passed"] = cal["day"]
@@ -151,6 +163,18 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
     )["work_day"].transform("sum")
 
     cal["work_days_left"] = total_workdays - cal["work_days_passed"]
+
+    # Циклическое кодирование месяца (sin/cos)
+    cal["month_sin"] = np.sin(2 * np.pi * cal["month"] / 12)
+    cal["month_cos"] = np.cos(2 * np.pi * cal["month"] / 12)
+
+    # Циклическое кодирование дня месяца (sin/cos)
+    cal["day_sin"] = np.sin(2 * np.pi * cal["day"] / 31)
+    cal["day_cos"] = np.cos(2 * np.pi * cal["day"] / 31)
+
+    # Циклическое кодирование дня недели (sin/cos)
+    cal["weekday_sin"] = np.sin(2 * np.pi * cal["day_of_week"] / 7)
+    cal["weekday_cos"] = np.cos(2 * np.pi * cal["day_of_week"] / 7)
 
     return cal
 

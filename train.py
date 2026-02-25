@@ -8,21 +8,23 @@
 
 Алгоритм обучения:
     1. Кодирование категорий (LabelEncoder)
-    2. Разделение на числовые и категориальные признаки
-    3. Создание DataLoader с батчами
-    4. Обучение на нескольких эпохах с использованием Huber Loss
-    5. Возврат обученной модели и энкодера категорий
+    2. Нормализация числовых признаков и target
+    3. Разделение на числовые и категориальные признаки
+    4. Создание DataLoader с батчами
+    5. Обучение на нескольких эпохах с использованием MSELoss
+    6. Возврат обученной модели и энкодера категорий
 """
 
 import torch
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 import numpy as np
+import pickle
 
 from model import TabTransformerModel
 
 
-def train_model(df, epochs: int = 20, batch_size: int = 256, learning_rate: float = 1e-3):
+def train_model(df, epochs: int = 20, batch_size: int = 512, learning_rate: float = 1e-3):
     """
     Обучает модель TabTransformer на переданных данных.
     
@@ -30,8 +32,8 @@ def train_model(df, epochs: int = 20, batch_size: int = 256, learning_rate: floa
         df: DataFrame с признаками и целевой переменной
             Ожидаемые колонки: category, month, day_of_month, и др.
             target: целевая переменная (продажи на остаток месяца)
-        epochs: количество эпох обучения (по умолчанию 5)
-        batch_size: размер батча (по умолчанию 256)
+        epochs: количество эпох обучения (по умолчанию 20)
+        batch_size: размер батча (по умолчанию 512)
         learning_rate: скорость обучения (по умолчанию 0.001)
     
     Returns:
@@ -40,7 +42,6 @@ def train_model(df, epochs: int = 20, batch_size: int = 256, learning_rate: floa
     # === 1. Подготовка данных ===
     
     # Преобразуем категории в числовые ID
-    # "MA002" -> 0, "MA004" -> 1, и т.д.
     cat_encoder = LabelEncoder()
     df["cat_id"] = cat_encoder.fit_transform(df["category"])
 
@@ -53,67 +54,70 @@ def train_model(df, epochs: int = 20, batch_size: int = 256, learning_rate: floa
     # Категориальные признаки (ID категорий)
     X_cat = df["cat_id"].values.astype("int64")
 
+    # Нормализация числовых признаков
+    scaler_X = StandardScaler()
+    X_num = scaler_X.fit_transform(X_num)
+
+    # Нормализация target (критически важно для обучения!)
+    scaler_y = StandardScaler()
+    y = scaler_y.fit_transform(y.reshape(-1, 1)).squeeze()
+
+    # Сохраняем scalers для инференса
+    with open("scaler_X.pkl", "wb") as f:
+        pickle.dump(scaler_X, f)
+    with open("scaler_y.pkl", "wb") as f:
+        pickle.dump(scaler_y, f)
+
     print(f"Обучаем на {len(X_num)} сэмплах")
     print(f"Числовых признаков: {X_num.shape[1]}")
     print(f"Категорий: {len(cat_encoder.classes_)}")
 
     # === 2. Создание DataLoader ===
     
-    # TensorDataset: объединяет numpy массивы в один датасет
     dataset = TensorDataset(
-        torch.tensor(X_num),   # числовые признаки
-        torch.tensor(X_cat),   # ID категорий
-        torch.tensor(y),       # целевая переменная
+        torch.tensor(X_num),
+        torch.tensor(X_cat),
+        torch.tensor(y),
     )
 
-    # DataLoader: итерируется по батчам
-    # shuffle=True перемешивает данные каждую эпоху
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     # === 3. Инициализация модели ===
     
     model = TabTransformerModel(
-        num_categories=len(cat_encoder.classes_),  # количество категорий
-        num_numeric=X_num.shape[1],                # количество числовых признаков
+        num_categories=len(cat_encoder.classes_),
+        num_numeric=X_num.shape[1],
+        hidden_dim=128,
     )
 
-    # Оптимизатор Adam: обновляет веса модели
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-    # Функция потерь Huber: устойчива к выбросам
-    # L1 loss для малых ошибок, L2 loss для больших
-    loss_fn = torch.nn.HuberLoss()
+    loss_fn = torch.nn.MSELoss()
 
     # === 4. Обучение ===
     
     print(f"\nОбучение модели ({epochs} эпох)...")
     
     for epoch in range(epochs):
+        model.train()
         total_loss = 0
         
-        # Итерируемся по батчам
         for x_num, x_cat, target in loader:
-            # Прямой проход: получаем предсказания
             pred = model(x_num, x_cat).squeeze()
-
-            # Вычисляем ошибку
             loss = loss_fn(pred, target)
 
-            # Обнуляем градиенты (чтобы не накапливались)
             optimizer.zero_grad()
-            
-            # Обратный проход: вычисляем градиенты
             loss.backward()
-            
-            # Обновляем веса
             optimizer.step()
 
             total_loss += loss.item()
 
-        # Выводим среднюю ошибку за эпоху
         avg_loss = total_loss / len(loader)
-        print(f"Epoch {epoch}: {avg_loss:,.4f}")
+        print(f"Epoch {epoch}: loss={avg_loss:.4f}")
 
     print("Обучение завершено!\n")
+
+    # Сохраняем модель
+    torch.save(model.state_dict(), "model.pt")
+    print("Модель сохранена в model.pt\n")
 
     return model, cat_encoder

@@ -116,13 +116,15 @@ class TabularDataset:
         # Предыдущий месяц
         prev = date - pd.DateOffset(months=1)
         
-        mask = (
-            (self.history_df.index.year == prev.year)
-            & (self.history_df.index.month == prev.month)
-        )
-        
-        if mask.sum() > 0:
-            return self.history_df.loc[mask, cat].sum()
+        # Сначала ищем в df (более свежие данные), потом в history_df
+        for source_df in [self.df, self.history_df]:
+            mask = (
+                (source_df.index.year == prev.year)
+                & (source_df.index.month == prev.month)
+            )
+            
+            if mask.sum() > 0 and cat in source_df.columns:
+                return source_df.loc[mask, cat].sum()
         
         return 0
 
@@ -139,17 +141,23 @@ class TabularDataset:
             
             series = self.full_df[cat]
             
-            # Лаг 7: сумма за 7 дней (включая сегодня)
+            # Суммы за периоды (скользящие)
             lag7 = series.rolling(window=7, min_periods=1).sum().shift(1)
-            # Лаг 14: сумма за 14 дней
             lag14 = series.rolling(window=14, min_periods=1).sum().shift(1)
-            # Лаг 28: сумма за 28 дней
             lag28 = series.rolling(window=28, min_periods=1).sum().shift(1)
+            
+            # Конкретные значения на день (lag1, lag7, lag14)
+            lag1 = series.shift(1)   # вчера
+            lag7_daily = series.shift(7)  # неделю назад
+            lag14_daily = series.shift(14)  # две недели назад
             
             lags_data[cat] = {
                 'last7': lag7,
                 'last14': lag14,
-                'last28': lag28
+                'last28': lag28,
+                'lag1': lag1,
+                'lag7': lag7_daily,
+                'lag14': lag14_daily
             }
         
         self._lags_cache = lags_data
@@ -169,6 +177,28 @@ class TabularDataset:
         
         val = lag_series.loc[date]
         return 0 if pd.isna(val) else val
+
+    def _get_lag_daily(self, cat, date, days_ago):
+        """
+        Получает продажи за конкретный день N дней назад.
+        
+        Args:
+            cat: категория
+            date: текущая дата
+            days_ago: сколько дней назад (1 = вчера, 7 = неделю назад)
+        
+        Returns:
+            Продажи за указанный день или 0
+        """
+        target_date = date - pd.Timedelta(days=days_ago)
+        
+        # Проверяем в history_df (более ранние данные) и df (текущий период)
+        for df in [self.history_df, self.full_df]:
+            if cat in df.columns and target_date in df.index:
+                val = df.loc[target_date, cat]
+                return 0 if pd.isna(val) else val
+        
+        return 0
 
     def build_samples(self) -> pd.DataFrame:
         """
@@ -225,22 +255,41 @@ class TabularDataset:
                     if remaining <= 0:
                         continue
                     
-                    # Лаги из кэша
+                    # Лаги из кэша (суммы за периоды)
                     last7 = self._get_lag(cat, date, 'last7')
                     last14 = self._get_lag(cat, date, 'last14')
                     last28 = self._get_lag(cat, date, 'last28')
                     
+                    # Конкретные значения на день
+                    lag1 = self._get_lag_daily(cat, date, 1)   # вчера
+                    lag7 = self._get_lag_daily(cat, date, 7)   # неделю назад
+                    lag14 = self._get_lag_daily(cat, date, 14) # две недели назад
+                    
                     samples_list.append({
                         "date": date,
                         "category": cat,
+                        "date_id": (date - self.df.index.min()).days,
                         "month": date.month,
                         "day_of_month": day,
+                        "day_of_week": self.cal.loc[date, "day_of_week"],
+                        "is_weekend": int(self.cal.loc[date, "is_weekend"]),
+                        "year": self.cal.loc[date, "year"],
+                        "month_idx": self.cal.loc[date, "month_idx"],
+                        "month_sin": self.cal.loc[date, "month_sin"],
+                        "month_cos": self.cal.loc[date, "month_cos"],
+                        "day_sin": self.cal.loc[date, "day_sin"],
+                        "day_cos": self.cal.loc[date, "day_cos"],
+                        "weekday_sin": self.cal.loc[date, "weekday_sin"],
+                        "weekday_cos": self.cal.loc[date, "weekday_cos"],
                         "days_left": self.cal.loc[date, "days_left"],
                         "work_days_left": self.cal.loc[date, "work_days_left"],
                         "cumulative_sales": cumulative,
                         "sales_last_7": last7,
                         "sales_last_14": last14,
                         "sales_last_28": last28,
+                        "lag1": lag1,
+                        "lag7": lag7,
+                        "lag14": lag14,
                         "sales_same_month_lastyear": self._last_year_progress(cat, date),
                         "sales_previous_month_total": self._previous_month_total(cat, date),
                         "target": remaining,
