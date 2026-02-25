@@ -79,12 +79,28 @@ class TabTransformerModel(nn.Module):
     def predict(self, x_num, x_cat):
         """
         Предсказание для инференса (одиночный сэмпл).
+        
+        Args:
+            x_num: numpy array или tensor числовых признаков, форма (1, num_numeric)
+            x_cat: numpy array или tensor ID категории, форма (1,) или int
+        
+        Returns:
+            Предсказание (нормализованное)
         """
         self.eval()
         
         with torch.no_grad():
+            # Преобразуем в тензоры если нужно
             x_num = torch.tensor(x_num, dtype=torch.float32) if not isinstance(x_num, torch.Tensor) else x_num
             x_cat = torch.tensor(x_cat, dtype=torch.int64) if not isinstance(x_cat, torch.Tensor) else x_cat
+            
+            # Убедимся, что x_num имеет форму (1, num_numeric)
+            if x_num.dim() == 1:
+                x_num = x_num.unsqueeze(0)
+            
+            # Убедимся, что x_cat имеет форму (1,)
+            if x_cat.dim() == 0:
+                x_cat = x_cat.unsqueeze(0)
             
             result = self.forward(x_num, x_cat).squeeze().item()
         

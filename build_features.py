@@ -178,26 +178,3 @@ def add_calendar_features(df: pd.DataFrame) -> pd.DataFrame:
 
     return cal
 
-
-def add_lags(wide_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Добавляет временные лаги (предыдущие значения продаж).
-    
-    Лаги используются как признаки для модели:
-    - lag1: продажи за вчера
-    - lag7: продажи за прошлую неделю (этот же день недели)
-    
-    Args:
-        wide_df: DataFrame в wide-формате
-    
-    Returns:
-        DataFrame с добавленными колонками лагов
-    """
-    # Сдвигаем данные на 1 день назад (вчера)
-    lag1 = wide_df.shift(1).add_suffix("_lag1")
-    
-    # Сдвигаем данные на 7 дней назад (прошлая неделя)
-    lag7 = wide_df.shift(7).add_suffix("_lag7")
-
-    # Объединяем исходный DataFrame с лагами
-    return pd.concat([wide_df, lag1, lag7], axis=1)
