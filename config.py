@@ -26,3 +26,8 @@ FEATURE_ORDER = [
     'cumulative_sales', 'sales_last_7', 'sales_last_14', 'sales_last_28',
     'lag1', 'lag7', 'lag14', 'sales_same_month_lastyear', 'sales_previous_month_total'
 ]
+
+# Режим обучения:
+# True - обучать на всех данных до последней даты включительно (без валидации)
+# False - оставлять 3 последних завершенных месяца для валидации
+USE_ALL_DATA_FOR_TRAINING = False

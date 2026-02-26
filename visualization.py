@@ -26,6 +26,17 @@ def plot_validation_results(val_df: pd.DataFrame, output_path: str = "validation
         val_df: DataFrame с результатами валидации
         output_path: путь для сохранения графика
     """
+    # Если данных нет - просто сохраняем пустой график
+    if val_df is None or len(val_df) == 0:
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        for ax in axes.flat:
+            ax.text(0.5, 0.5, 'Нет данных для валидации', ha='center', va='center', transform=ax.transAxes)
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150)
+        print(f"Графики сохранены в {output_path} (пустой график)")
+        plt.show()
+        return
+    
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
     # Фильтруем: только записи где есть что предсказывать (fact_remaining > 0)
@@ -57,7 +68,7 @@ def plot_validation_results(val_df: pd.DataFrame, output_path: str = "validation
     ax2.axhline(y=0, color='black', linestyle='--', linewidth=1)
     ax2.set_xlabel("День месяца (когда сделан прогноз)")
     ax2.set_ylabel("Ошибка прогноза общего объёма %")
-    ax2.set_title("(fact_total - total_forecast) / fact_total по дням")
+    ax2.set_title("MAPE факт прогноз по дням")
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     

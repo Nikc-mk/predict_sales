@@ -18,7 +18,7 @@
 import pickle
 import pandas as pd
 
-from config import DATA_PATH, CATEGORIES
+from config import DATA_PATH, CATEGORIES, USE_ALL_DATA_FOR_TRAINING
 from build_features import load_raw_data, pivot_daily, add_calendar_features
 from dataset import TabularDataset
 from train import train_model
@@ -50,11 +50,17 @@ def main():
     print("ЭТАП 3: Создание обучающей выборки")
     print("=" * 50)
     
-    # Определяем тестовые месяцы ДО обучения, чтобы исключить их из обучающей выборки
-    test_months = get_test_months(wide)
-    print(f"Тестовые месяца (будут исключены из обучения): {test_months}")
+    if USE_ALL_DATA_FOR_TRAINING:
+        # Обучаем на всех данных до последней даты включительно
+        test_months = None
+        print("Режим: обучение на всех данных (без валидации)")
+        dataset_builder = TabularDataset(wide, calendar, test_months=None)
+    else:
+        # Определяем тестовые месяцы ДО обучения, чтобы исключить их из обучающей выборки
+        test_months = get_test_months(wide)
+        print(f"Тестовые месяца (будут исключены из обучения): {test_months}")
+        dataset_builder = TabularDataset(wide, calendar, test_months=test_months)
     
-    dataset_builder = TabularDataset(wide, calendar, test_months=test_months)
     samples = dataset_builder.build_samples()
     
     print(f"Размер датасета: {samples.shape}")
@@ -95,23 +101,27 @@ def main():
     forecast.to_csv("forecast_output.csv", index=False)
     
     # === ЭТАП 6: Валидация и визуализация ===
-    print("\n" + "=" * 50)
-    print("ЭТАП 6: Валидация (3 последних месяца)")
-    print("=" * 50)
+    if USE_ALL_DATA_FOR_TRAINING:
+        print("\n" + "=" * 50)
+        print("ЭТАП 6: Пропуск валидации (режим USE_ALL_DATA_FOR_TRAINING=True)")
+        print("=" * 50)
+        # Создаём пустой DataFrame для визуализации
+        val_df = pd.DataFrame()
+    else:
+        print("\n" + "=" * 50)
+        print("ЭТАП 6: Валидация (3 последних месяца)")
+        print("=" * 50)
+        
+        # test_months уже определён в ЭТАПЕ 3
+        print(f"Тестовые месяца: {test_months}")
+        
+        # Валидация
+        val_df = validate_daily(model, wide, calendar, test_months, scaler_X, scaler_y)
+        print(f"Записей валидации: {len(val_df)}")
+        val_df.to_csv("validation_results.csv", index=False)
     
-    # test_months уже определён в ЭТАПЕ 3
-    print(f"Тестовые месяца: {test_months}")
-    
-    # Честная валидация: тестовые месяцы НЕ использовались при обучении
-    model_val = model
-    
-    # Валидация
-    val_df = validate_daily(model_val, wide, calendar, test_months, scaler_X, scaler_y)
-    print(f"Записей валидации: {len(val_df)}")
-    
-    # Визуализация
+    # Визуализация (работает и с пустым DataFrame)
     plot_validation_results(val_df)
-    val_df.to_csv("validation_results.csv", index=False)
     
     print("\n" + "=" * 50)
     print("Пайплайн завершён!")
