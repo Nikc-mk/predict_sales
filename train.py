@@ -23,6 +23,9 @@ import pickle
 
 from model import TabTransformerModel
 
+# Используем log1p для target (стандарт индустрии для продаж)
+USE_LOG1P = False
+
 
 def train_model(df, epochs: int = 20, batch_size: int = 512, learning_rate: float = 1e-3):
     """
@@ -58,9 +61,13 @@ def train_model(df, epochs: int = 20, batch_size: int = 512, learning_rate: floa
     scaler_X = StandardScaler()
     X_num = scaler_X.fit_transform(X_num)
 
-    # Нормализация target (критически важно для обучения!)
-    scaler_y = StandardScaler()
-    y = scaler_y.fit_transform(y.reshape(-1, 1)).squeeze()
+    # Log1p для target (стандарт индустрии для продаж)
+    if USE_LOG1P:
+        y = np.log1p(y)
+        scaler_y = "log1p"  # Маркер для инференса
+    else:
+        scaler_y = StandardScaler()
+        y = scaler_y.fit_transform(y.reshape(-1, 1)).squeeze()
 
     # Сохраняем scalers для инференса
     with open("scaler_X.pkl", "wb") as f:

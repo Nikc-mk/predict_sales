@@ -68,8 +68,10 @@ def predict_current_month(model, wide_df, categories_list, calendar, scaler_X=No
                 torch.tensor(x_cat, dtype=torch.int64)
             ).item()
         
-        # Денормализация
-        if scaler_y is not None:
+        # Денормализация: expm1 для log1p (или обратно для StandardScaler)
+        if scaler_y == "log1p":
+            predicted_remaining = np.expm1(pred_scaled)
+        elif scaler_y is not None:
             predicted_remaining = scaler_y.inverse_transform([[pred_scaled]])[0][0]
         else:
             predicted_remaining = pred_scaled

@@ -112,8 +112,10 @@ def validate_daily(model, wide_df: pd.DataFrame, calendar: pd.DataFrame,
                 # Предсказание
                 pred_scaled = model.predict(x_num_for_pred, x_cat)
                 
-                # Денормализация
-                if scaler_y is not None:
+                # Денормализация: expm1 для log1p (или обратно для StandardScaler)
+                if scaler_y == "log1p":
+                    pred = np.expm1(pred_scaled)
+                elif scaler_y is not None:
                     pred = scaler_y.inverse_transform([[pred_scaled]])[0][0]
                 else:
                     pred = pred_scaled
