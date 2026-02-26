@@ -75,7 +75,8 @@ class RealTabTransformer(nn.Module):
         # 1. Эмбеддинги для категорий
         self.category_emb = nn.Embedding(num_categories, d_model)
         
-        # 2. Проекция числовых признаков в d_model
+        # 2. Проекция числовых признаков - каждый признак проецируется в d_model
+        # Используем Linear для каждого признака отдельно
         self.numeric_proj = nn.Linear(num_numeric, d_model)
         
         # 3. Позиционное кодирование
@@ -108,14 +109,17 @@ class RealTabTransformer(nn.Module):
         Returns:
             Предсказанные продажи, форма (batch_size, 1)
         """
-        # Проецируем числовые признаки в d_model
-        numeric_features = self.numeric_proj(x_num)  # (batch, d_model)
+        # Проецируем числовые признаки: (batch, num_numeric) -> (batch, d_model) -> (batch, num_numeric, d_model)
+        # Сначала проецируем все признаки вместе
+        numeric_projected = self.numeric_proj(x_num)  # (batch, d_model)
+        # Затем расширяем, чтобы получить токен для каждого признака
+        numeric_tokens = numeric_projected.unsqueeze(1).expand(-1, x_num.size(1), -1)  # (batch, num_numeric, d_model)
         
-        # Получаем эмбеддинги категорий
-        cat_features = self.category_emb(x_cat)  # (batch, d_model)
+        # Категория тоже даёт один токен
+        cat_token = self.category_emb(x_cat).unsqueeze(1)  # (batch, 1, d_model)
         
-        # Объединяем в последовательность: [numeric, category]
-        combined = torch.stack([numeric_features, cat_features], dim=1)  # (batch, seq_len=2, d_model)
+        # Объединяем: все числовые токены + категория
+        combined = torch.cat([numeric_tokens, cat_token], dim=1)  # (batch, num_numeric+1, d_model)
         
         # Добавляем позиционное кодирование
         combined = self.pos_encoder(combined)
