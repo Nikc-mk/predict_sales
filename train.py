@@ -94,7 +94,11 @@ def train_model(df, epochs: int = 20, batch_size: int = 512, learning_rate: floa
     model = TabTransformerModel(
         num_categories=len(cat_encoder.classes_),
         num_numeric=X_num.shape[1],
-        hidden_dim=128,
+        d_model=128,
+        nhead=8,
+        num_layers=4,
+        dim_feedforward=256,
+        dropout=0.1,
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
